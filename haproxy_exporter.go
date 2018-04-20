@@ -21,6 +21,7 @@ import (
 	"github.com/prometheus/common/log"
 	"github.com/prometheus/common/version"
 	"gopkg.in/alecthomas/kingpin.v2"
+	"os"
 )
 
 const (
@@ -473,7 +474,7 @@ func main() {
 	https://prometheus.io/docs/instrumenting/writing_clientlibs/#process-metrics.`
 
 	var (
-		listenAddress             = kingpin.Flag("web.listen-address", "Address to listen on for web interface and telemetry.").Default(":9101").String()
+		listenAddress             = kingpin.Flag("unix-sock", "Address to listen on for unix sock access and telemetry.").Default("/dev/shm/haproxy_exporter.sock").String()
 		metricsPath               = kingpin.Flag("web.telemetry-path", "Path under which to expose metrics.").Default("/metrics").String()
 		haProxyScrapeURI          = kingpin.Flag("haproxy.scrape-uri", "URI on which to scrape HAProxy.").Default("http://localhost/;csv").String()
 		haProxySSLVerify          = kingpin.Flag("haproxy.ssl-verify", "Flag that enables SSL certificate verification for the scrape URI").Default("true").Bool()
@@ -519,15 +520,25 @@ func main() {
 	}
 
 	log.Infoln("Listening on", *listenAddress)
-	http.Handle(*metricsPath, prometheus.Handler())
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+	mux := http.NewServeMux()
+	mux.Handle(*metricsPath, prometheus.Handler())
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`<html>
-             <head><title>Haproxy Exporter</title></head>
-             <body>
-             <h1>Haproxy Exporter</h1>
-             <p><a href='` + *metricsPath + `'>Metrics</a></p>
-             </body>
-             </html>`))
+                        <head><title>Node Exporter</title></head>
+                        <body>
+                        <h1>Node Exporter</h1>
+                        <p><a href="` + *metricsPath + `">Metrics</a></p>
+                        </body>
+                        </html>`))
 	})
-	log.Fatal(http.ListenAndServe(*listenAddress, nil))
+	server := http.Server{
+		Handler: mux, // http.DefaultServeMux,
+	}
+	os.Remove(*listenAddress)
+
+	listener, err := net.Listen("unix", *listenAddress)
+	if err != nil {
+		panic(err)
+	}
+	server.Serve(listener)
 }
